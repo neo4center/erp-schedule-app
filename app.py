@@ -1,33 +1,57 @@
 import calendar
 from datetime import datetime
+import json
+import os
 import pandas as pd
 import openpyxl
 import streamlit as st
 from ortools.sat.python import cp_model
 
-user = {'성명': 'admin'}  # 임시 사용자 데이터
-
 # 페이지 기본 설정
 st.set_page_config(page_title="물류센터 근무계획표 시스템", layout="wide")
 
-# ==============================================================================
-# 1. 세션 상태 초기화
-# ==============================================================================
-if 'logged_in_user' not in st.session_state:
-    st.session_state.logged_in_user = None  # 로그인 성공 시 사용자 dict 저장
+DATA_FILE = "employees.json"
 
-if 'is_admin' not in st.session_state:
-    st.session_state.is_admin = False  # 관리자 권한 여부
-
-# 초기 근무자 명단 (기본 비밀번호는 사번과 동일)
-if 'employees' not in st.session_state:
-    st.session_state.employees = [
+# ==============================================================================
+# 0. 데이터 영구 저장/로드 함수 (JSON 파일 방식)
+# ==============================================================================
+def load_employees():
+    """파일에서 근무자 명단을 불러옵니다. 파일이 없으면 초기 데이터 생성."""
+    if os.path.exists(DATA_FILE):
+        try:
+            with open(DATA_FILE, "r", encoding="utf-8") as f:
+                return json.load(f)
+        except Exception:
+            pass
+            
+    # 초기 기본 명단 (admin 계정 포함)
+    initial_data = [
+        {'사번': 'admin', '비밀번호': 'admin', '성명': '관리자', '직급': '팀장', '구분': '주5일', '기본휴무일': [], '선호짝꿍': '', '비선호짝꿍': '', '입사일': '2023-01-01', '연차': 15, '휴가': 3, '관리자': True},
         {'사번': '1001', '비밀번호': '1001', '성명': '최광호', '직급': '팀장', '구분': '주5일', '기본휴무일': [], '선호짝꿍': '', '비선호짝꿍': '', '입사일': '2023-01-01', '연차': 15, '휴가': 3, '관리자': True},
         {'사번': '1002', '비밀번호': '1002', '성명': '권민중', '직급': '부팀장', '구분': '야간', '기본휴무일': [], '선호짝꿍': '이영희', '비선호짝꿍': '김철수', '입사일': '2024-05-01', '연차': 15, '휴가': 3, '관리자': False},
         {'사번': '1003', '비밀번호': '1003', '성명': '김철수', '직급': '대리', '구분': '야간', '기본휴무일': [], '선호짝꿍': '', '비선호짝꿍': '권민중', '입사일': '2025-02-01', '연차': 15, '휴가': 3, '관리자': False},
         {'사번': '1004', '비밀번호': '1004', '성명': '이영희', '직급': '주임', '구분': '야간', '기본휴무일': [], '선호짝꿍': '권민중', '비선호짝꿍': '', '입사일': '2025-11-01', '연차': 15, '휴가': 3, '관리자': False},
         {'사번': '1005', '비밀번호': '1005', '성명': '박민수', '직급': '사원', '구분': '주간스케줄', '기본휴무일': ['수', '목'], '선호짝꿍': '', '비선호짝꿍': '', '입사일': '2026-02-01', '연차': 10, '휴가': 3, '관리자': False},
     ]
+    save_employees(initial_data)
+    return initial_data
+
+def save_employees(data):
+    """근무자 명단을 JSON 파일로 저장합니다."""
+    with open(DATA_FILE, "w", encoding="utf-8") as f:
+        json.dump(data, f, ensure_ascii=False, indent=4)
+
+# ==============================================================================
+# 1. 세션 상태 초기화
+# ==============================================================================
+if 'logged_in_user' not in st.session_state:
+    st.session_state.logged_in_user = None
+
+if 'is_admin' not in st.session_state:
+    st.session_state.is_admin = False
+
+if 'employees' not in st.session_state:
+    st.session_state.employees = load_employees()
 
 if 'requests' not in st.session_state:
     st.session_state.requests = []
@@ -42,7 +66,7 @@ if not st.session_state.logged_in_user:
     col_a, col_b, col_c = st.columns([1, 2, 1])
     with col_b:
         st.subheader("계정 정보 입력")
-        login_id = st.text_input("아이디 (사원번호)", placeholder="예: 1001")
+        login_id = st.text_input("아이디 (사원번호)", placeholder="예: admin 또는 1001")
         login_pw = st.text_input("비밀번호", type="password", placeholder="비밀번호 입력")
         
         if st.button("로그인", use_container_width=True):
@@ -61,7 +85,6 @@ if not st.session_state.logged_in_user:
 # ==============================================================================
 # 3. 메인 시스템 화면 (로그인 후 접근 가능)
 # ==============================================================================
-# 사이드바 사용자 프로필 및 로그아웃
 user = st.session_state.logged_in_user
 role_badge = "👑 관리자" if st.session_state.is_admin else "👤 일반 사용자"
 
@@ -82,7 +105,7 @@ st.title("📅 물류센터 월간 근무계획표 자동 생성 시스템")
 tab1, tab2, tab3 = st.tabs(["👥 1. 근무자 명단 및 권한 관리", "📝 2. 근무조정 요청 입력", "🚀 3. 근무표 자동 생성"])
 
 # ------------------------------------------------------------------------------
-# TAB 1: 근무자 명단 및 관리자 전용 편집 (사번/비번/체크박스)
+# TAB 1: 근무자 명단 및 관리자 전용 편집
 # ------------------------------------------------------------------------------
 with tab1:
     st.subheader("📋 전체 근무자 명단")
@@ -100,7 +123,6 @@ with tab1:
         target_cols = ['사번', '성명(표식)', '직급', '구분', '기본휴무일_표시', '선호짝꿍', '비선호짝꿍', '입사일', '관리자']
         valid_cols = [c for c in target_cols if c in df_display.columns]
         
-        # 컬럼명 보기 좋게 변경
         rename_map = {'기본휴무일_표시': '기본휴무일(주간스케줄)'}
         st.dataframe(df_display[valid_cols].rename(columns=rename_map), use_container_width=True)
     
@@ -124,7 +146,6 @@ with tab1:
             with c2:
                 new_type = st.selectbox("근무 구분", ["주5일", "주간스케줄", "야간"])
                 
-                # 주간스케줄 근무자만 체크박스 활성화
                 is_schedule = (new_type == "주간스케줄")
                 st.write("**기본 휴무일 선택 (주간스케줄 전용)**")
                 new_off_days = []
@@ -154,7 +175,8 @@ with tab1:
                         '선호짝꿍': new_pref.strip(), '비선호짝꿍': new_dislike.strip(),
                         '입사일': new_join, '연차': 15, '휴가': 3, '관리자': is_admin_check
                     })
-                    st.success(f"근무자 '{new_name}'(사번: {new_id}) 님이 새로 등록되었습니다.")
+                    save_employees(st.session_state.employees)  # 파일 영구 저장
+                    st.success(f"근무자 '{new_name}'(사번: {new_id}) 님이 등록되었습니다.")
                     st.rerun()
 
         # 2. 기존 근무자 정보 수정 및 삭제
@@ -206,11 +228,13 @@ with tab1:
                             target_emp['선호짝꿍'] = mod_pref.strip()
                             target_emp['비선호짝꿍'] = mod_dislike.strip()
                             target_emp['관리자'] = mod_admin
-                            st.success(f"'{mod_name}' 님의 정보가 성공적으로 수정되었습니다.")
+                            save_employees(st.session_state.employees)  # 파일 영구 저장
+                            st.success(f"'{mod_name}' 님의 정보가 수정되었습니다.")
                             st.rerun()
                     with btn_c2:
                         if st.button("❌ 근무자 삭제", use_container_width=True):
                             st.session_state.employees = [e for e in st.session_state.employees if e['사번'] != target_id]
+                            save_employees(st.session_state.employees)  # 파일 영구 저장
                             st.success(f"사번 '{target_id}' 근무자가 삭제되었습니다.")
                             st.rerun()
 
@@ -295,7 +319,7 @@ with tab3:
                             if dis_idx is not None:
                                 model.AddBoolOr([x[(e, d, 1)].Not(), x[(dis_idx, d, 1)].Not()])
 
-            # 4. 주5일 및 주간 스케줄 기본 조건 (체크박스 선택된 휴무 요일 적용)
+            # 4. 주5일 및 주간 스케줄 기본 조건
             for e, emp in enumerate(employees):
                 for d in days:
                     dt = datetime(target_year, target_month, d)
