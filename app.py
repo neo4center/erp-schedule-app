@@ -311,4 +311,29 @@ with tab3:
             solver.parameters.max_time_in_seconds = 10.0
             status = solver.Solve(model)
             
-            if status in (cp_model
+            if status in (cp_model.OPTIMAL, cp_model.FEASIBLE):
+                st.success("🎉 최적의 근무표가 성공적으로 생성되었습니다!")
+                
+                schedule_data = []
+                for e, emp in enumerate(employees):
+                    row = {'사번': emp['사번'], '성명': emp['성명'], '직급': emp['직급'], '구분': emp['구분']}
+                    for d in days:
+                        assigned = [s for s in range(8) if solver.Value(x[(e, d, s)]) == 1][0]
+                        row[f"{d}일"] = code_to_name[assigned]
+                    schedule_data.append(row)
+                    
+                df_res = pd.DataFrame(schedule_data)
+                st.dataframe(df_res, use_container_width=True)
+                
+                output_filename = f"{target_year}년_{target_month}월_근무계획표.xlsx"
+                df_res.to_excel(output_filename, index=False)
+                
+                with open(output_filename, "rb") as file:
+                    st.download_button(
+                        label="📥 엑셀 파일(.xlsx) 다운로드",
+                        data=file,
+                        file_name=output_filename,
+                        mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+                    )
+            else:
+                st.error("❌ 제약 조건이 너무 까다로워 스케줄을 생성하지 못했습니다.")
