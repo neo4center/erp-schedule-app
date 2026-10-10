@@ -2,53 +2,183 @@ import calendar
 from datetime import datetime
 import pandas as pd
 import openpyxl
-from openpyxl.styles import Font, PatternFill, Alignment, Border, Side
 import streamlit as st
 from ortools.sat.python import cp_model
 
 # 페이지 기본 설정
-st.set_page_config(page_title="물류센터 월간 근무계획표 자동 생성기", layout="wide")
+st.set_page_config(page_title="물류센터 근무계획표 시스템", layout="wide")
 
-st.title("📅 월간 근무계획표 자동 생성 & 스케줄 관리 시스템")
-st.markdown("---")
+# ==============================================================================
+# 1. 세션 상태 및 초기 데이터 설정
+# ==============================================================================
+if 'logged_in_user' not in st.session_state:
+    st.session_state.logged_in_user = None  # 현재 로그인한 사용자 성명
 
-# 세션 상태 초기화 (데이터 유지용)
+if 'is_admin' not in st.session_state:
+    st.session_state.is_admin = False  # 관리자 여부
+
+# 관리자 초기 비밀번호 (필요시 변경 가능)
+ADMIN_PASSWORD = "admin"
+
+# 초기 근무자 명단 (직급: 팀장/부팀장/대리/주임/사원)
 if 'employees' not in st.session_state:
     st.session_state.employees = [
-        {'성명': '최광호', '직급': '팀장', '구분': '주5일', '기본휴무일_선호짝꿍': '', '비선호짝꿍': '', '입사일': '2023-01-01', '연차': 15, '휴가': 3},
-        {'성명': '권민중', '직급': '선임', '구분': '야간', '기본휴무일_선호짝꿍': '이영희', '비선호짝꿍': '김철수', '입사일': '2024-05-01', '연차': 15, '휴가': 3},
-        {'성명': '김철수', '직급': '후임', '구분': '야간', '기본휴무일_선호짝꿍': '', '비선호짝꿍': '권민중', '입사일': '2025-02-01', '연차': 15, '휴가': 3},
-        {'성명': '이영희', '직급': '후임', '구분': '야간', '기본휴무일_선호짝꿍': '권민중', '비선호짝꿍': '', '입사일': '2025-11-01', '연차': 15, '휴가': 3},
-        {'성명': '박민수', '직급': '사원', '구분': '주간스케줄', '기본휴무일_선호짝꿍': '수,목', '비선호짝꿍': '', '입사일': '2026-02-01', '연차': 10, '휴가': 3},
+        {'성명': '최광호', '직급': '팀장', '구분': '주5일', '기본휴무일_선호짝꿍': '', '비선호짝꿍': '', '입사일': '2023-01-01', '연차': 15, '휴가': 3, '관리자': True},
+        {'성명': '권민중', '직급': '부팀장', '구분': '야간', '기본휴무일_선호짝꿍': '이영희', '비선호짝꿍': '김철수', '입사일': '2024-05-01', '연차': 15, '휴가': 3, '관리자': False},
+        {'성명': '김철수', '직급': '대리', '구분': '야간', '기본휴무일_선호짝꿍': '', '비선호짝꿍': '권민중', '입사일': '2025-02-01', '연차': 15, '휴가': 3, '관리자': False},
+        {'성명': '이영희', '직급': '주임', '구분': '야간', '기본휴무일_선호짝꿍': '권민중', '비선호짝꿍': '', '입사일': '2025-11-01', '연차': 15, '휴가': 3, '관리자': False},
+        {'성명': '박민수', '직급': '사원', '구분': '주간스케줄', '기본휴무일_선호짝꿍': '수,목', '비선호짝꿍': '', '입사일': '2026-02-01', '연차': 10, '휴가': 3, '관리자': False},
     ]
 
 if 'requests' not in st.session_state:
     st.session_state.requests = []
 
-# 탭 구성 (1. 근무자 관리 / 2. 근무조정 요청 / 3. 근무표 생성)
-tab1, tab2, tab3 = st.tabs(["👥 1. 근무자 명단 및 조건 관리", "📝 2. 팀원별 근무조정 요청 입력", "🚀 3. 근무표 자동 생성 및 다운로드"])
+# ==============================================================================
+# 2. 사이드바 로그인 시스템
+# ==============================================================================
+st.sidebar.title("🔐 계정 로그인")
 
-# ==============================================================================
-# TAB 1: 근무자 명단 관리
-# ==============================================================================
-with tab1:
-    st.subheader("근무자 기본 정보 및 야간 짝꿍 / 휴무 조건 설정")
-    df_emp = pd.DataFrame(st.session_state.employees)
-    edited_df = st.data_editor(df_emp, num_rows="dynamic", use_container_width=True)
-    st.session_state.employees = edited_df.to_dict('records')
-    st.info("💡 '구분' 항목: 주5일, 주간스케줄, 야간 중 선택 / 주간스케줄은 '수,목' 형태 입력 / 야간은 선호/비선호 짝꿍 이름을 입력하세요.")
-
-# ==============================================================================
-# TAB 2: 근무조정 요청사항 입력
-# ==============================================================================
-with tab2:
-    st.subheader("팀원별 개별 근태 및 휴무 요청 등록")
+if not st.session_state.logged_in_user:
+    emp_names = [e['성명'] for e in st.session_state.employees]
+    selected_user = st.sidebar.selectbox("사용자 선택", emp_names)
+    input_pw = st.sidebar.text_input("관리자 비밀번호 (일반 직원은 입력 생략가능)", type="password")
     
+    if st.sidebar.button("로그인"):
+        user_info = next((e for e in st.session_state.employees if e['성명'] == selected_user), None)
+        st.session_state.logged_in_user = selected_user
+        
+        # 관리자 계정이며 비밀번호가 맞을 경우 관리자 권한 부여
+        if user_info and user_info.get('관리자', False):
+            if input_pw == ADMIN_PASSWORD:
+                st.session_state.is_admin = True
+                st.sidebar.success(f"👑 관리자({selected_user})로 로그인되었습니다.")
+            else:
+                st.session_state.is_admin = False
+                st.sidebar.warning("비밀번호가 틀려 일반 사용자 권한으로 로그인되었습니다.")
+        else:
+            st.session_state.is_admin = False
+            st.sidebar.info(f"{selected_user} 님으로 로그인되었습니다.")
+        st.rerun()
+else:
+    role_label = "👑 관리자" if st.session_state.is_admin else "👤 일반 사용자"
+    st.sidebar.write(f"**현재 접속자:** {st.session_state.logged_in_user} ({role_label})")
+    if st.sidebar.button("로그아웃"):
+        st.session_state.logged_in_user = None
+        st.session_state.is_admin = False
+        st.rerun()
+
+st.sidebar.markdown("---")
+st.sidebar.caption("💡 **관리자 비밀번호 안내:** 기본 비밀번호는 `admin` 입니다.")
+
+# ==============================================================================
+# 3. 메인 화면 및 탭 구성
+# ==============================================================================
+st.title("📅 물류센터 월간 근무계획표 자동 생성 시스템")
+
+tab1, tab2, tab3 = st.tabs(["👥 1. 근무자 명단 및 권한 관리", "📝 2. 근무조정 요청 입력", "🚀 3. 근무표 자동 생성"])
+
+# ------------------------------------------------------------------------------
+# TAB 1: 근무자 명단 및 관리자 권한 관리
+# ------------------------------------------------------------------------------
+with tab1:
+    st.subheader("📋 전체 근무자 명단")
+    
+    # 관리자 표식이 포함된 출력용 데이터프레임 생성
+    df_display = pd.DataFrame(st.session_state.employees)
+    df_display['성명(표식)'] = df_display.apply(
+        lambda r: f"👑 {r['성명']} (관리자)" if r.get('관리자', False) else r['성명'], axis=1
+    )
+    
+    # 보기 좋게 열 순서 정리
+    cols_order = ['성명(표식)', '직급', '구분', '기본휴무일_선호짝꿍', '비선호짝꿍', '입사일', '연차', '휴가', '관리자']
+    st.dataframe(df_display[cols_order], use_container_width=True)
+    
+    st.markdown("---")
+    
+    # --- 관리자 전용 편집 기능 ---
+    if st.session_state.is_admin:
+        st.subheader("🛠️ [관리자 전용] 근무자 정보 추가 / 수정 / 삭제")
+        
+        edit_mode = st.radio("작업 선택", ["신규 근무자 등록", "근무자 정보 수정/삭제 및 권한 변경"], horizontal=True)
+        
+        # 1. 신규 등록
+        if edit_mode == "신규 근무자 등록":
+            with st.form("add_emp_form"):
+                c1, c2, c3 = st.columns(3)
+                with c1:
+                    new_name = st.text_input("성명")
+                    new_rank = st.selectbox("직급", ["팀장", "부팀장", "대리", "주임", "사원"])
+                with c2:
+                    new_type = st.selectbox("근무 구분", ["주5일", "주간스케줄", "야간"])
+                    new_pref = st.text_input("기본휴무일(수,목) 또는 선호짝꿍")
+                with c3:
+                    new_dislike = st.text_input("비선호짝꿍")
+                    new_join = st.date_input("입사일").strftime("%Y-%m-%d")
+                    is_admin_check = st.checkbox("관리자 권한 부여")
+                    
+                submit_add = st.form_submit_button("신규 근무자 추가")
+                
+                if submit_add:
+                    if new_name.strip() == "":
+                        st.error("성명을 입력해 주세요.")
+                    else:
+                        st.session_state.employees.append({
+                            '성명': new_name, '직급': new_rank, '구분': new_type,
+                            '기본휴무일_선호짝꿍': new_pref, '비선호짝꿍': new_dislike,
+                            '입사일': new_join, '연차': 15, '휴가': 3, '관리자': is_admin_check
+                        })
+                        st.success(f"'{new_name}' 님이 새로 등록되었습니다!")
+                        st.rerun()
+
+        # 2. 기존 정보 수정 및 삭제
+        else:
+            emp_to_edit = st.selectbox("수정/삭제할 근무자 선택", [e['성명'] for e in st.session_state.employees])
+            target_emp = next((e for e in st.session_state.employees if e['성명'] == emp_to_edit), None)
+            
+            if target_emp:
+                with st.form("edit_emp_form"):
+                    c1, c2, c3 = st.columns(3)
+                    with c1:
+                        mod_rank = st.selectbox("직급", ["팀장", "부팀장", "대리", "주임", "사원"], index=["팀장", "부팀장", "대리", "주임", "사원"].index(target_emp['직급']))
+                        mod_type = st.selectbox("근무 구분", ["주5일", "주간스케줄", "야간"], index=["주5일", "주간스케줄", "야간"].index(target_emp['구분']))
+                    with c2:
+                        mod_pref = st.text_input("기본휴무일 또는 선호짝꿍", value=target_emp['기본휴무일_선호짝꿍'])
+                        mod_dislike = st.text_input("비선호짝꿍", value=target_emp['비선호짝꿍'])
+                    with c3:
+                        mod_admin = st.checkbox("관리자 권한 부여", value=target_emp.get('관리자', False))
+                        
+                    c_btn1, c_btn2 = st.columns(2)
+                    with c_btn1:
+                        submit_mod = st.form_submit_button("정보 수정 저장")
+                    with c_btn2:
+                        submit_del = st.form_submit_button("❌ 근무자 삭제")
+                        
+                    if submit_mod:
+                        target_emp['직급'] = mod_rank
+                        target_emp['구분'] = mod_type
+                        target_emp['기본휴무일_선호짝꿍'] = mod_pref
+                        target_emp['비선호짝꿍'] = mod_dislike
+                        target_emp['관리자'] = mod_admin
+                        st.success(f"'{emp_to_edit}' 님의 정보가 수정되었습니다.")
+                        st.rerun()
+                        
+                    if submit_del:
+                        st.session_state.employees = [e for e in st.session_state.employees if e['성명'] != emp_to_edit]
+                        st.success(f"'{emp_to_edit}' 님이 명단에서 삭제되었습니다.")
+                        st.rerun()
+    else:
+        st.info("🔒 근무자 추가/수정/삭제 및 권한 변경은 **관리자 계정으로 로그인** 시 이용 가능합니다. (사이드바 로그인)")
+
+# ------------------------------------------------------------------------------
+# TAB 2: 근무조정 요청 입력 (기존 동일)
+# ------------------------------------------------------------------------------
+with tab2:
+    st.subheader("📝 팀원별 근무조정 요청 입력")
     col1, col2, col3, col4 = st.columns(4)
-    emp_names = [e['성명'] for e in st.session_state.employees if e['성명']]
+    emp_names = [e['성명'] for e in st.session_state.employees]
     
     with col1:
-        req_emp = st.selectbox("근무자 선택", emp_names)
+        req_emp = st.selectbox("근무자 선택", emp_names, key="req_emp_sb")
     with col2:
         req_day = st.number_input("요청 일자(일)", min_value=1, max_value=31, value=13)
     with col3:
@@ -64,13 +194,13 @@ with tab2:
         st.dataframe(pd.DataFrame(st.session_state.requests), use_container_width=True)
         if st.button("요청 목록 전체 초기화"):
             st.session_state.requests = []
-            st.experimental_rerun()
+            st.rerun()
 
-# ==============================================================================
-# TAB 3: 스케줄 생성 엔진 (OR-Tools)
-# ==============================================================================
+# ------------------------------------------------------------------------------
+# TAB 3: 근무표 자동 생성 (기존 동일)
+# ------------------------------------------------------------------------------
 with tab3:
-    st.subheader("월간 스케줄 자동 생성")
+    st.subheader("🚀 월간 스케줄 자동 생성")
     
     col_y, col_m = st.columns(2)
     with col_y:
@@ -79,23 +209,17 @@ with tab3:
         target_month = st.number_input("월 선택", min_value=1, max_value=12, value=11)
         
     if st.button("🔥 스케줄 최적화 실행 및 근무표 생성"):
-        with st.spinner("구글 OR-Tools 엔진이 제약 조건을 분석하여 근무표를 생성 중입니다..."):
-            
-            # 해당 월의 일수 및 요일 계산
+        with st.spinner("구글 OR-Tools 엔진이 최적 조합을 계산 중입니다..."):
             num_days = calendar.monthrange(target_year, target_month)[1]
             days = list(range(1, num_days + 1))
             
-            # OR-Tools 모델 초기화
             model = cp_model.CpModel()
-            
-            # 근무 코드: 0:주간, 1:야간3, 2:대휴, 3:연차, 4:휴가, 5:공가, 6:비번, 7:휴무
             shift_map = {'주': 0, '야3': 1, '대': 2, '연차': 3, '휴가': 4, '공가': 5, '비': 6, '휴무': 7}
             code_to_name = {v: k for k, v in shift_map.items()}
             
             employees = [e for e in st.session_state.employees if e['성명']]
             num_emp = len(employees)
             
-            # 변수 선언: x[(e, d, s)] = 0 또는 1
             x = {}
             for e in range(num_emp):
                 for d in days:
@@ -107,21 +231,18 @@ with tab3:
                 for d in days:
                     model.AddExactlyOne(x[(e, d, s)] for s in range(8))
                     
-            # 2. 팀원별 신청 요청사항 반영
+            # 2. 신청 요청사항 반영
             for req in st.session_state.requests:
                 e_idx = next((i for i, e in enumerate(employees) if e['성명'] == req['성명']), None)
                 if e_idx is not None and req['일자'] <= num_days:
                     s_code = shift_map.get(req['요청근무'], 2)
                     model.Add(x[(e_idx, req['일자'], s_code)] == 1)
                     
-            # 3. 야간 근무자 조건 (2인 1조 매무 및 선호/비선호)
+            # 3. 야간 근무자 조건
             night_indices = [i for i, e in enumerate(employees) if e['구분'] == '야간']
             for d in days:
                 if len(night_indices) >= 2:
-                    # 하루 야간3(1) 근무자는 정확히 2명
                     model.Add(sum(x[(e, d, 1)] for e in night_indices) == 2)
-                    
-                    # 비선호 짝꿍 제약 (동시 야간3 근무 금지)
                     for e in night_indices:
                         dis_name = employees[e].get('비선호짝꿍', '')
                         if dis_name:
@@ -129,7 +250,7 @@ with tab3:
                             if dis_idx is not None:
                                 model.AddBoolOr([x[(e, d, 1)].Not(), x[(dis_idx, d, 1)].Not()])
 
-            # 4. 주5일 및 주간 스케줄러 기본 조건
+            # 4. 주5일 및 주간 스케줄 기본 조건
             for e, emp in enumerate(employees):
                 for d in days:
                     dt = datetime(target_year, target_month, d)
@@ -137,14 +258,12 @@ with tab3:
                     
                     if emp['구분'] == '주5일':
                         if weekday_str in ["토", "일"]:
-                            # 주말은 대휴(2) 우선
                             model.Add(x[(e, d, 2)] == 1)
                     elif emp['구분'] == '주간스케줄':
                         pref_off = str(emp.get('기본휴무일_선호짝꿍', ''))
                         if weekday_str in pref_off:
-                            model.Add(x[(e, d, 2)] == 1) # 설정 휴무일은 대휴(2)
+                            model.Add(x[(e, d, 2)] == 1)
 
-            # Solver 실행
             solver = cp_model.CpSolver()
             solver.parameters.max_time_in_seconds = 10.0
             status = solver.Solve(model)
@@ -152,7 +271,6 @@ with tab3:
             if status in (cp_model.OPTIMAL, cp_model.FEASIBLE):
                 st.success("🎉 최적의 근무표가 성공적으로 생성되었습니다!")
                 
-                # 결과를 DataFrame으로 변환
                 schedule_data = []
                 for e, emp in enumerate(employees):
                     row = {'성명': emp['성명'], '직급': emp['직급'], '구분': emp['구분']}
@@ -164,7 +282,6 @@ with tab3:
                 df_res = pd.DataFrame(schedule_data)
                 st.dataframe(df_res, use_container_width=True)
                 
-                # 엑셀 다운로드 파일 생성
                 output_filename = f"{target_year}년_{target_month}월_근무계획표.xlsx"
                 df_res.to_excel(output_filename, index=False)
                 
@@ -176,4 +293,4 @@ with tab3:
                         mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
                     )
             else:
-                st.error("❌ 설정된 제약 조건이 너무 까다로워 근무표를 생성할 수 없습니다. 요청사항이나 짝꿍 제약을 완화해 보세요.")
+                st.error("❌ 조건이 까다로워 근무표를 생성할 수 없습니다. 요청사항이나 짝꿍 제약을 완화해 주세요.")
