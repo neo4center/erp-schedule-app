@@ -41,6 +41,21 @@ def save_employees(data):
     with open(DATA_FILE, "w", encoding="utf-8") as f:
         json.dump(data, f, ensure_ascii=False, indent=4)
 
+def get_sorted_employees(emp_list):
+    """주5일 -> 주간스케줄 -> 야간 순, 2순위 사번 오름차순 정렬"""
+    df = pd.DataFrame(emp_list)
+    if df.empty:
+        return df
+    
+    # 근무 구분 우선순위 맵핑
+    type_order = {'주5일': 1, '주간스케줄': 2, '야간': 3}
+    df['type_rank'] = df['구분'].map(lambda x: type_order.get(x, 99))
+    
+    # 1순위: type_rank 오름차순, 2순위: 사번 오름차순 정렬
+    df_sorted = df.sort_values(by=['type_rank', '사번'], ascending=[True, True])
+    df_sorted = df_sorted.drop(columns=['type_rank'])
+    return df_sorted
+
 # ==============================================================================
 # 1. 세션 상태 초기화
 # ==============================================================================
@@ -80,7 +95,7 @@ if not st.session_state.logged_in_user:
             else:
                 st.error("아이디(사번) 또는 비밀번호가 올바르지 않습니다.")
                 
-    st.stop()  # 로그인되지 않았으면 아래 메인 시스템 코드를 실행하지 않음
+    st.stop()  # 로그인되지 않았으면 메인화면 미출력
 
 # ==============================================================================
 # 3. 메인 시스템 화면 (로그인 후 접근 가능)
@@ -102,146 +117,39 @@ st.sidebar.markdown("---")
 
 st.title("📅 물류센터 월간 근무계획표 자동 생성 시스템")
 
-tab1, tab2, tab3 = st.tabs(["👥 1. 근무자 명단 및 권한 관리", "📝 2. 근무조정 요청 입력", "🚀 3. 근무표 자동 생성"])
+# 관리자 여부에 따라 탭 목록 생성
+tab_titles = ["👥 1. 근무자 명단", "📝 2. 근무조정 요청 입력", "🚀 3. 근무표 자동 생성"]
+if st.session_state.is_admin:
+    tab_titles.append("🛠️ 4. [관리자] 근무자 정보 관리")
+
+tabs = st.tabs(tab_titles)
 
 # ------------------------------------------------------------------------------
-# TAB 1: 근무자 명단 및 관리자 전용 편집
+# TAB 1: 근무자 명단 (정렬 적용)
 # ------------------------------------------------------------------------------
-with tab1:
+with tabs[0]:
     st.subheader("📋 전체 근무자 명단")
     
     if st.session_state.employees:
-        df_display = pd.DataFrame(st.session_state.employees)
+        df_sorted = get_sorted_employees(st.session_state.employees)
         
-        df_display['성명(표식)'] = df_display.apply(
+        df_sorted['성명(표식)'] = df_sorted.apply(
             lambda r: f"👑 {r['성명']} (관리자)" if r.get('관리자', False) else r['성명'], axis=1
         )
-        df_display['기본휴무일_표시'] = df_display['기본휴무일'].apply(
+        df_sorted['기본휴무일_표시'] = df_sorted['기본휴무일'].apply(
             lambda x: ", ".join(x) if isinstance(x, list) and x else "-"
         )
         
         target_cols = ['사번', '성명(표식)', '직급', '구분', '기본휴무일_표시', '선호짝꿍', '비선호짝꿍', '입사일', '관리자']
-        valid_cols = [c for c in target_cols if c in df_display.columns]
+        valid_cols = [c for c in target_cols if c in df_sorted.columns]
         
         rename_map = {'기본휴무일_표시': '기본휴무일(주간스케줄)'}
-        st.dataframe(df_display[valid_cols].rename(columns=rename_map), use_container_width=True)
-    
-    st.markdown("---")
-    
-    # 관리자 전용 등록 및 수정 메뉴
-    if st.session_state.is_admin:
-        st.subheader("🛠️ [관리자 전용] 근무자 정보 추가 / 수정 / 삭제")
-        
-        edit_mode = st.radio("작업 선택", ["신규 근무자 등록", "기존 근무자 정보 수정/삭제"], horizontal=True)
-        days_list = ["월", "화", "수", "목", "금", "토", "일"]
-        
-        # 1. 신규 근무자 등록
-        if edit_mode == "신규 근무자 등록":
-            c1, c2, c3 = st.columns(3)
-            with c1:
-                new_id = st.text_input("아이디 (사번)")
-                new_pw = st.text_input("비밀번호 (미입력 시 사번과 동일)", type="password")
-                new_name = st.text_input("성명")
-                new_rank = st.selectbox("직급", ["팀장", "부팀장", "대리", "주임", "사원"])
-            with c2:
-                new_type = st.selectbox("근무 구분", ["주5일", "주간스케줄", "야간"])
-                
-                is_schedule = (new_type == "주간스케줄")
-                st.write("**기본 휴무일 선택 (주간스케줄 전용)**")
-                new_off_days = []
-                cb_cols = st.columns(7)
-                for idx, day_str in enumerate(days_list):
-                    with cb_cols[idx]:
-                        checked = st.checkbox(day_str, disabled=not is_schedule, key=f"new_cb_{day_str}")
-                        if checked and is_schedule:
-                            new_off_days.append(day_str)
-                            
-            with c3:
-                new_pref = st.text_input("선호 짝꿍 (야간 전용)")
-                new_dislike = st.text_input("비선호 짝꿍 (야간 전용)")
-                new_join = st.date_input("입사일").strftime("%Y-%m-%d")
-                is_admin_check = st.checkbox("관리자 권한 부여")
-                
-            if st.button("신규 근무자 등록 저장", use_container_width=True):
-                if not new_id.strip() or not new_name.strip():
-                    st.error("사번과 성명은 필수 입력 사항입니다.")
-                elif any(e['사번'] == new_id.strip() for e in st.session_state.employees):
-                    st.error("이미 등록된 사번입니다.")
-                else:
-                    pw_final = new_pw.strip() if new_pw.strip() else new_id.strip()
-                    st.session_state.employees.append({
-                        '사번': new_id.strip(), '비밀번호': pw_final, '성명': new_name.strip(),
-                        '직급': new_rank, '구분': new_type, '기본휴무일': new_off_days,
-                        '선호짝꿍': new_pref.strip(), '비선호짝꿍': new_dislike.strip(),
-                        '입사일': new_join, '연차': 15, '휴가': 3, '관리자': is_admin_check
-                    })
-                    save_employees(st.session_state.employees)  # 파일 영구 저장
-                    st.success(f"근무자 '{new_name}'(사번: {new_id}) 님이 등록되었습니다.")
-                    st.rerun()
-
-        # 2. 기존 근무자 정보 수정 및 삭제
-        else:
-            emp_options = [f"{e['사번']} - {e['성명']}" for e in st.session_state.employees]
-            selected_emp_str = st.selectbox("수정할 근무자 선택", emp_options)
-            
-            if selected_emp_str:
-                target_id = selected_emp_str.split(" - ")[0]
-                target_emp = next((e for e in st.session_state.employees if e['사번'] == target_id), None)
-                
-                if target_emp:
-                    c1, c2, c3 = st.columns(3)
-                    with c1:
-                        mod_id = st.text_input("아이디 (사번)", value=target_emp['사번'])
-                        mod_pw = st.text_input("비밀번호", value=target_emp.get('비밀번호', ''), type="password")
-                        mod_name = st.text_input("성명", value=target_emp['성명'])
-                        mod_rank = st.selectbox("직급", ["팀장", "부팀장", "대리", "주임", "사원"], index=["팀장", "부팀장", "대리", "주임", "사원"].index(target_emp['직급']))
-                    with c2:
-                        mod_type = st.selectbox("근무 구분", ["주5일", "주간스케줄", "야간"], index=["주5일", "주간스케줄", "야간"].index(target_emp['구분']))
-                        
-                        is_mod_schedule = (mod_type == "주간스케줄")
-                        st.write("**기본 휴무일 선택 (주간스케줄 전용)**")
-                        mod_off_days = []
-                        cb_cols2 = st.columns(7)
-                        curr_off = target_emp.get('기본휴무일', [])
-                        
-                        for idx, day_str in enumerate(days_list):
-                            with cb_cols2[idx]:
-                                is_default = (day_str in curr_off) if is_mod_schedule else False
-                                checked = st.checkbox(day_str, value=is_default, disabled=not is_mod_schedule, key=f"mod_cb_{day_str}")
-                                if checked and is_mod_schedule:
-                                    mod_off_days.append(day_str)
-                                    
-                    with c3:
-                        mod_pref = st.text_input("선호 짝꿍", value=target_emp.get('선호짝꿍', ''))
-                        mod_dislike = st.text_input("비선호 짝꿍", value=target_emp.get('비선호짝꿍', ''))
-                        mod_admin = st.checkbox("관리자 권한 부여", value=target_emp.get('관리자', False))
-                        
-                    btn_c1, btn_c2 = st.columns(2)
-                    with btn_c1:
-                        if st.button("수정 내용 저장", use_container_width=True):
-                            target_emp['사번'] = mod_id.strip()
-                            target_emp['비밀번호'] = mod_pw.strip()
-                            target_emp['성명'] = mod_name.strip()
-                            target_emp['직급'] = mod_rank
-                            target_emp['구분'] = mod_type
-                            target_emp['기본휴무일'] = mod_off_days
-                            target_emp['선호짝꿍'] = mod_pref.strip()
-                            target_emp['비선호짝꿍'] = mod_dislike.strip()
-                            target_emp['관리자'] = mod_admin
-                            save_employees(st.session_state.employees)  # 파일 영구 저장
-                            st.success(f"'{mod_name}' 님의 정보가 수정되었습니다.")
-                            st.rerun()
-                    with btn_c2:
-                        if st.button("❌ 근무자 삭제", use_container_width=True):
-                            st.session_state.employees = [e for e in st.session_state.employees if e['사번'] != target_id]
-                            save_employees(st.session_state.employees)  # 파일 영구 저장
-                            st.success(f"사번 '{target_id}' 근무자가 삭제되었습니다.")
-                            st.rerun()
+        st.dataframe(df_sorted[valid_cols].rename(columns=rename_map), use_container_width=True)
 
 # ------------------------------------------------------------------------------
 # TAB 2: 근무조정 요청 입력
 # ------------------------------------------------------------------------------
-with tab2:
+with tabs[1]:
     st.subheader("📝 팀원별 근무조정 요청 입력")
     col1, col2, col3, col4 = st.columns(4)
     emp_names = [e['성명'] for e in st.session_state.employees]
@@ -268,7 +176,7 @@ with tab2:
 # ------------------------------------------------------------------------------
 # TAB 3: 근무표 자동 생성 Engine (OR-Tools)
 # ------------------------------------------------------------------------------
-with tab3:
+with tabs[2]:
     st.subheader("🚀 월간 스케줄 자동 생성")
     
     col_y, col_m = st.columns(2)
@@ -363,3 +271,126 @@ with tab3:
                     )
             else:
                 st.error("❌ 제약 조건이 너무 까다로워 스케줄을 생성하지 못했습니다.")
+
+# ------------------------------------------------------------------------------
+# TAB 4: [관리자 전용] 근무자 정보 관리 (입사일 수정 포함)
+# ------------------------------------------------------------------------------
+if st.session_state.is_admin:
+    with tabs[3]:
+        st.subheader("🛠️ [관리자 전용] 근무자 정보 추가 / 수정 / 삭제")
+        
+        edit_mode = st.radio("작업 선택", ["신규 근무자 등록", "기존 근무자 정보 수정/삭제"], horizontal=True)
+        days_list = ["월", "화", "수", "목", "금", "토", "일"]
+        
+        # 1. 신규 근무자 등록
+        if edit_mode == "신규 근무자 등록":
+            c1, c2, c3 = st.columns(3)
+            with c1:
+                new_id = st.text_input("아이디 (사번)")
+                new_pw = st.text_input("비밀번호 (미입력 시 사번과 동일)", type="password")
+                new_name = st.text_input("성명")
+                new_rank = st.selectbox("직급", ["팀장", "부팀장", "대리", "주임", "사원"])
+            with c2:
+                new_type = st.selectbox("근무 구분", ["주5일", "주간스케줄", "야간"])
+                
+                is_schedule = (new_type == "주간스케줄")
+                st.write("**기본 휴무일 선택 (주간스케줄 전용)**")
+                new_off_days = []
+                cb_cols = st.columns(7)
+                for idx, day_str in enumerate(days_list):
+                    with cb_cols[idx]:
+                        checked = st.checkbox(day_str, disabled=not is_schedule, key=f"new_cb_{day_str}")
+                        if checked and is_schedule:
+                            new_off_days.append(day_str)
+                            
+            with c3:
+                new_pref = st.text_input("선호 짝꿍 (야간 전용)")
+                new_dislike = st.text_input("비선호 짝꿍 (야간 전용)")
+                new_join = st.date_input("입사일").strftime("%Y-%m-%d")
+                is_admin_check = st.checkbox("관리자 권한 부여")
+                
+            if st.button("신규 근무자 등록 저장", use_container_width=True):
+                if not new_id.strip() or not new_name.strip():
+                    st.error("사번과 성명은 필수 입력 사항입니다.")
+                elif any(e['사번'] == new_id.strip() for e in st.session_state.employees):
+                    st.error("이미 등록된 사번입니다.")
+                else:
+                    pw_final = new_pw.strip() if new_pw.strip() else new_id.strip()
+                    st.session_state.employees.append({
+                        '사번': new_id.strip(), '비밀번호': pw_final, '성명': new_name.strip(),
+                        '직급': new_rank, '구분': new_type, '기본휴무일': new_off_days,
+                        '선호짝꿍': new_pref.strip(), '비선호짝꿍': new_dislike.strip(),
+                        '입사일': new_join, '연차': 15, '휴가': 3, '관리자': is_admin_check
+                    })
+                    save_employees(st.session_state.employees)
+                    st.success(f"근무자 '{new_name}'(사번: {new_id}) 님이 새로 등록되었습니다.")
+                    st.rerun()
+
+        # 2. 기존 근무자 정보 수정 및 삭제 (입사일 수정 가능)
+        else:
+            emp_options = [f"{e['사번']} - {e['성명']}" for e in st.session_state.employees]
+            selected_emp_str = st.selectbox("수정할 근무자 선택", emp_options)
+            
+            if selected_emp_str:
+                target_id = selected_emp_str.split(" - ")[0]
+                target_emp = next((e for e in st.session_state.employees if e['사번'] == target_id), None)
+                
+                if target_emp:
+                    c1, c2, c3 = st.columns(3)
+                    with c1:
+                        mod_id = st.text_input("아이디 (사번)", value=target_emp['사번'])
+                        mod_pw = st.text_input("비밀번호", value=target_emp.get('비밀번호', ''), type="password")
+                        mod_name = st.text_input("성명", value=target_emp['성명'])
+                        mod_rank = st.selectbox("직급", ["팀장", "부팀장", "대리", "주임", "사원"], index=["팀장", "부팀장", "대리", "주임", "사원"].index(target_emp['직급']))
+                    with c2:
+                        mod_type = st.selectbox("근무 구분", ["주5일", "주간스케줄", "야간"], index=["주5일", "주간스케줄", "야간"].index(target_emp['구분']))
+                        
+                        is_mod_schedule = (mod_type == "주간스케줄")
+                        st.write("**기본 휴무일 선택 (주간스케줄 전용)**")
+                        mod_off_days = []
+                        cb_cols2 = st.columns(7)
+                        curr_off = target_emp.get('기본휴무일', [])
+                        
+                        for idx, day_str in enumerate(days_list):
+                            with cb_cols2[idx]:
+                                is_default = (day_str in curr_off) if is_mod_schedule else False
+                                checked = st.checkbox(day_str, value=is_default, disabled=not is_mod_schedule, key=f"mod_cb_{day_str}")
+                                if checked and is_mod_schedule:
+                                    mod_off_days.append(day_str)
+                                    
+                    with c3:
+                        mod_pref = st.text_input("선호 짝꿍", value=target_emp.get('선호짝꿍', ''))
+                        mod_dislike = st.text_input("비선호 짝꿍", value=target_emp.get('비선호짝꿍', ''))
+                        
+                        # 기존 입사일 파싱하여 date_input 기본값으로 지정
+                        curr_join_str = target_emp.get('입사일', '2026-01-01')
+                        try:
+                            curr_join_dt = datetime.strptime(curr_join_str, "%Y-%m-%d").date()
+                        except ValueError:
+                            curr_join_dt = datetime.now().date()
+                        
+                        mod_join = st.date_input("입사일", value=curr_join_dt).strftime("%Y-%m-%d")
+                        mod_admin = st.checkbox("관리자 권한 부여", value=target_emp.get('관리자', False))
+                        
+                    btn_c1, btn_c2 = st.columns(2)
+                    with btn_c1:
+                        if st.button("수정 내용 저장", use_container_width=True):
+                            target_emp['사번'] = mod_id.strip()
+                            target_emp['비밀번호'] = mod_pw.strip()
+                            target_emp['성명'] = mod_name.strip()
+                            target_emp['직급'] = mod_rank
+                            target_emp['구분'] = mod_type
+                            target_emp['기본휴무일'] = mod_off_days
+                            target_emp['선호짝꿍'] = mod_pref.strip()
+                            target_emp['비선호짝꿍'] = mod_dislike.strip()
+                            target_emp['입사일'] = mod_join
+                            target_emp['관리자'] = mod_admin
+                            save_employees(st.session_state.employees)
+                            st.success(f"'{mod_name}' 님의 정보가 수정되었습니다.")
+                            st.rerun()
+                    with btn_c2:
+                        if st.button("❌ 근무자 삭제", use_container_width=True):
+                            st.session_state.employees = [e for e in st.session_state.employees if e['사번'] != target_id]
+                            save_employees(st.session_state.employees)
+                            st.success(f"사번 '{target_id}' 근무자가 삭제되었습니다.")
+                            st.rerun()
