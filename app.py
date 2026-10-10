@@ -5,6 +5,8 @@ import openpyxl
 import streamlit as st
 from ortools.sat.python import cp_model
 
+user = {'성명': 'admin'}  # 임시 사용자 데이터
+
 # 페이지 기본 설정
 st.set_page_config(page_title="물류센터 근무계획표 시스템", layout="wide")
 
