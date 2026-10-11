@@ -1,4 +1,4 @@
-calendar
+import calendar
 from datetime import datetime
 import json
 import pandas as pd
@@ -372,7 +372,6 @@ if st.session_state.is_admin:
                                 '입사일': mod_join, '연차': target_emp.get('연차', 15),
                                 '휴가': target_emp.get('휴가', 3), '관리자': mod_admin
                             }
-                            # 사번이 변경되었을 경우 기존 사번 데이터 삭제 후 재생성 처리
                             if target_id != mod_id.strip():
                                 delete_employee_from_db(target_id)
                             save_employee_to_db(updated_dict)
