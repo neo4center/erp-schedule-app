@@ -53,8 +53,8 @@ def load_employees_from_db():
                 '선호짝꿍': row['pref_partner'] or '',
                 '비선호짝꿍': row['dislike_partner'] or '',
                 '입사일': row['join_date'],
-                '연차': row['annual_leave'],
-                '휴가': row['vacation'],
+                '연차': int(row['annual_leave']) if row.get('annual_leave') not in [None, ''] else 15,
+                '휴가': int(row['vacation']) if row.get('vacation') not in [None, ''] else 3,
                 '관리자': row['is_admin']
             })
         return formatted_data
@@ -74,8 +74,8 @@ def save_employee_to_db(emp_dict):
         'pref_partner': emp_dict['선호짝꿍'],
         'dislike_partner': emp_dict['비선호짝꿍'],
         'join_date': emp_dict['입사일'],
-        'annual_leave': emp_dict['연차'],
-        'vacation': emp_dict['휴가'],
+        'annual_leave': int(emp_dict.get('연차', 15)),
+        'vacation': int(emp_dict.get('휴가', 3)),
         'is_admin': emp_dict['관리자']
     }
     supabase.table("employees").upsert(payload).execute()
@@ -369,8 +369,8 @@ if st.session_state.is_admin:
                                 '사번': mod_id.strip(), '비밀번호': mod_pw.strip(), '성명': mod_name.strip(),
                                 '직급': mod_rank, '구분': mod_type, '기본휴무일': mod_off_days,
                                 '선호짝꿍': mod_pref.strip(), '비선호짝꿍': mod_dislike.strip(),
-                                '입사일': mod_join, '연차': target_emp.get('연차', 15),
-                                '휴가': target_emp.get('휴가', 3), '관리자': mod_admin
+                                '입사일': mod_join, '연차': int(target_emp.get('연차', 15)),
+                                '휴가': int(target_emp.get('휴가', 3)), '관리자': mod_admin
                             }
                             if target_id != mod_id.strip():
                                 delete_employee_from_db(target_id)
