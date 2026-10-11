@@ -32,18 +32,18 @@ def load_employees_from_db():
         formatted_data = []
         for row in data:
             formatted_data.append({
-                '사번': str(row['emp_id']),
-                '비밀번호': str(row['password']),
-                '성명': row['name'],
-                '직급': row['rank'],
-                '구분': row['work_type'],
+                '사번': str(row['emp_id']).strip(),
+                '비밀번호': str(row['password']).strip(),
+                '성명': str(row['name']).strip(),
+                '직급': str(row['rank']).strip(),
+                '구분': str(row['work_type']).strip(),
                 '기본휴무일': row['off_days'] if isinstance(row['off_days'], list) else json.loads(row['off_days'] or '[]'),
-                '선호짝꿍': row['pref_partner'] or '',
-                '비선호짝꿍': row['dislike_partner'] or '',
-                '입사일': row['join_date'],
+                '선호짝꿍': str(row['pref_partner'] or '').strip(),
+                '비선호짝꿍': str(row['dislike_partner'] or '').strip(),
+                '입사일': str(row['join_date']).strip(),
                 '연차': int(row['annual_leave']) if row.get('annual_leave') not in [None, ''] else 15,
                 '휴가': int(row['vacation']) if row.get('vacation') not in [None, ''] else 3,
-                '관리자': row['is_admin']
+                '관리자': bool(row['is_admin'])
             })
         return formatted_data
     except Exception as e:
@@ -53,30 +53,30 @@ def load_employees_from_db():
 def save_employee_to_db(emp_dict):
     """신규 근무자를 Supabase에 추가합니다."""
     payload = {
-        'emp_id': emp_dict['사번'],
-        'password': emp_dict['비밀번호'],
-        'name': emp_dict['성명'],
-        'rank': emp_dict['직급'],
-        'work_type': emp_dict['구분'],
+        'emp_id': str(emp_dict['사번']).strip(),
+        'password': str(emp_dict['비밀번호']).strip(),
+        'name': str(emp_dict['성명']).strip(),
+        'rank': str(emp_dict['직급']).strip(),
+        'work_type': str(emp_dict['구분']).strip(),
         'off_days': emp_dict['기본휴무일'],
-        'pref_partner': emp_dict['선호짝꿍'],
-        'dislike_partner': emp_dict['비선호짝꿍'],
-        'join_date': emp_dict['입사일'],
+        'pref_partner': str(emp_dict['선호짝꿍']).strip(),
+        'dislike_partner': str(emp_dict['비선호짝꿍']).strip(),
+        'join_date': str(emp_dict['입사일']).strip(),
         'annual_leave': int(emp_dict.get('연차', 15)),
         'vacation': int(emp_dict.get('휴가', 3)),
-        'is_admin': emp_dict['관리자']
+        'is_admin': bool(emp_dict['관리자'])
     }
     supabase.table("employees").upsert(payload).execute()
 
 def delete_employee_from_db(emp_id):
     """Supabase에서 근무자를 삭제합니다."""
-    supabase.table("employees").delete().eq("emp_id", emp_id).execute()
+    supabase.table("employees").delete().eq("emp_id", str(emp_id).strip()).execute()
 
 def get_sorted_employees(emp_list):
     """
     정렬 조건:
     1. 관리자 최상단 (관리자 True: 0, False: 1)
-    2. 직급 순 (팀장: 1, 부팀장: 2, 기타: 3)
+    2. 직급 순 (팀장: 1, 부팀장: 2, 대리: 3, 주임: 4, 사원: 5)
     3. 근무구분 순 (주간스케줄: 1, 주5일: 2, 야간: 3)
     4. 사번 오름차순
     """
@@ -84,10 +84,10 @@ def get_sorted_employees(emp_list):
     if df.empty:
         return df
     
-    # 1. 관리자 순서 (True가 먼저 오도록)
+    # 1. 관리자 순서
     df['admin_rank'] = df['관리자'].map(lambda x: 0 if x else 1)
     
-    # 2. 직급 순서 (팀장 -> 부팀장 -> 기타)
+    # 2. 직급 순서 명확히 정의 (팀장, 부팀장, 대리, 주임, 사원)
     rank_order = {'팀장': 1, '부팀장': 2, '대리': 3, '주임': 4, '사원': 5}
     df['rank_order'] = df['직급'].map(lambda x: rank_order.get(x, 99))
     
@@ -95,7 +95,6 @@ def get_sorted_employees(emp_list):
     type_order = {'주간스케줄': 1, '주5일': 2, '야간': 3}
     df['type_rank'] = df['구분'].map(lambda x: type_order.get(x, 99))
     
-    # 정렬 수행
     df_sorted = df.sort_values(
         by=['admin_rank', 'rank_order', 'type_rank', '사번'], 
         ascending=[True, True, True, True]
@@ -119,7 +118,7 @@ if 'requests' not in st.session_state:
     st.session_state.requests = []
 
 # ==============================================================================
-# 2. 첫 페이지: 로그인 화면
+# 2. 첫 페이지: 로그인 화면 (숫자 사번 문자열 비교 보완)
 # ==============================================================================
 if not st.session_state.logged_in_user:
     st.title("🔒 물류센터 ERP 시스템 - 로그인")
@@ -132,9 +131,12 @@ if not st.session_state.logged_in_user:
         login_pw = st.text_input("비밀번호", type="password", placeholder="비밀번호 입력")
         
         if st.button("로그인", use_container_width=True):
-            user_info = next((e for e in st.session_state.employees if e['사번'] == login_id.strip()), None)
+            input_id = login_id.strip()
+            input_pw = login_pw.strip()
             
-            if user_info and user_info.get('비밀번호') == login_pw.strip():
+            user_info = next((e for e in st.session_state.employees if e['사번'] == input_id), None)
+            
+            if user_info and user_info.get('비밀번호') == input_pw:
                 st.session_state.logged_in_user = user_info
                 st.session_state.is_admin = user_info.get('관리자', False)
                 st.success(f"{user_info['성명']} 님 환영합니다!")
@@ -169,7 +171,7 @@ if st.session_state.is_admin:
 
 tabs = st.tabs(tab_titles)
 
-# TAB 1: 근무자 명단 (정렬 및 컬럼 개편)
+# TAB 1: 근무자 명단
 with tabs[0]:
     st.subheader("📋 전체 근무자 명단")
     if st.session_state.employees:
@@ -182,7 +184,6 @@ with tabs[0]:
             lambda x: ", ".join(x) if isinstance(x, list) and x else "-"
         )
         
-        # 선호/비선호 짝꿍을 제외하고 연차, 휴가를 포함하여 구성
         target_cols = ['사번', '성명(표식)', '직급', '구분', '기본휴무일_표시', '입사일', '연차', '휴가', '관리자']
         valid_cols = [c for c in target_cols if c in df_sorted.columns]
         
@@ -298,7 +299,7 @@ with tabs[2]:
             else:
                 st.error("❌ 제약 조건이 너무 까다로워 스케줄을 생성하지 못했습니다.")
 
-# TAB 4: [관리자 전용] 근무자 정보 관리 (짝꿍 정보는 여기서만 관리)
+# TAB 4: [관리자 전용] 근무자 정보 관리
 if st.session_state.is_admin:
     with tabs[3]:
         st.subheader("🛠️ [관리자 전용] 근무자 정보 추가 / 수정 / 삭제")
