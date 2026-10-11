@@ -77,7 +77,7 @@ def get_sorted_employees(emp_list):
     정렬 조건:
     1. admin 관리자 최상단 고정
     2. 1차: 직급 순 (팀장: 1, 부팀장: 2, 그 외 직급: 3)
-    3. 2차: 근무구분 순 (주간스케줄: 1, 주5일: 2, 야간: 3)
+    3. 2차: 근무구분 순 (주5일: 1, 주간스케줄: 2, 야간: 3)
     4. 3차: 같은 직급 내 사번 기준 오름차순
     """
     df = pd.DataFrame(emp_list)
@@ -91,8 +91,8 @@ def get_sorted_employees(emp_list):
     rank_order = {'팀장': 1, '부팀장': 2}
     df['rank_order'] = df['직급'].map(lambda x: rank_order.get(x, 3))
     
-    # 3. 근무구분 순서 (주간스케줄 -> 주5일 -> 야간)
-    type_order = {'주간스케줄': 1, '주5일': 2, '야간': 3}
+    # 3. 근무구분 순서 (주5일 -> 주간스케줄 -> 야간)
+    type_order = {'주5일': 1, '주간스케줄': 2, '야간': 3}
     df['type_rank'] = df['구분'].map(lambda x: type_order.get(x, 99))
     
     df_sorted = df.sort_values(
