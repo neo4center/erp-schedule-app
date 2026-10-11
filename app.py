@@ -299,7 +299,7 @@ with tabs[2]:
             else:
                 st.error("❌ 제약 조건이 너무 까다로워 스케줄을 생성하지 못했습니다.")
 
-# TAB 4: [관리자 전용] 근무자 정보 관리
+# TAB 4: [관리자 전용] 근무자 정보 관리 (연차, 휴가 등록/수정 추가)
 if st.session_state.is_admin:
     with tabs[3]:
         st.subheader("🛠️ [관리자 전용] 근무자 정보 추가 / 수정 / 삭제")
@@ -327,6 +327,11 @@ if st.session_state.is_admin:
                 new_pref = st.text_input("선호 짝꿍 (야간 전용)")
                 new_dislike = st.text_input("비선호 짝꿍 (야간 전용)")
                 new_join = st.date_input("입사일").strftime("%Y-%m-%d")
+                
+                # 신규 등록 시 연차, 휴가 일수 입력 필드 추가
+                new_annual = st.number_input("연차 일수", min_value=0, max_value=50, value=15)
+                new_vacation = st.number_input("휴가 일수", min_value=0, max_value=30, value=3)
+                
                 is_admin_check = st.checkbox("관리자 권한 부여")
                 
             if st.button("신규 근무자 등록 저장", use_container_width=True):
@@ -340,7 +345,7 @@ if st.session_state.is_admin:
                         '사번': new_id.strip(), '비밀번호': pw_final, '성명': new_name.strip(),
                         '직급': new_rank, '구분': new_type, '기본휴무일': new_off_days,
                         '선호짝꿍': new_pref.strip(), '비선호짝꿍': new_dislike.strip(),
-                        '입사일': new_join, '연차': 15, '휴가': 3, '관리자': is_admin_check
+                        '입사일': new_join, '연차': int(new_annual), '휴가': int(new_vacation), '관리자': is_admin_check
                     }
                     save_employee_to_db(new_emp_dict)
                     st.session_state.employees = load_employees_from_db()
@@ -382,6 +387,11 @@ if st.session_state.is_admin:
                         except ValueError:
                             curr_join_dt = datetime.now().date()
                         mod_join = st.date_input("입사일", value=curr_join_dt).strftime("%Y-%m-%d")
+                        
+                        # 기존 근무자 수정 시 연차, 휴가 일수 수정 필드 추가
+                        mod_annual = st.number_input("연차 일수 수정", min_value=0, max_value=50, value=int(target_emp.get('연차', 15)))
+                        mod_vacation = st.number_input("휴가 일수 수정", min_value=0, max_value=30, value=int(target_emp.get('휴가', 3)))
+                        
                         mod_admin = st.checkbox("관리자 권한 부여", value=target_emp.get('관리자', False))
                         
                     btn_c1, btn_c2 = st.columns(2)
@@ -391,8 +401,7 @@ if st.session_state.is_admin:
                                 '사번': mod_id.strip(), '비밀번호': mod_pw.strip(), '성명': mod_name.strip(),
                                 '직급': mod_rank, '구분': mod_type, '기본휴무일': mod_off_days,
                                 '선호짝꿍': mod_pref.strip(), '비선호짝꿍': mod_dislike.strip(),
-                                '입사일': mod_join, '연차': int(target_emp.get('연차', 15)),
-                                '휴가': int(target_emp.get('휴가', 3)), '관리자': mod_admin
+                                '입사일': mod_join, '연차': int(mod_annual), '휴가': int(mod_vacation), '관리자': mod_admin
                             }
                             if target_id != mod_id.strip():
                                 delete_employee_from_db(target_id)
