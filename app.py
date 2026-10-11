@@ -75,21 +75,21 @@ def delete_employee_from_db(emp_id):
 def get_sorted_employees(emp_list):
     """
     정렬 조건:
-    1. 관리자 최상단 (관리자 True: 0, False: 1)
-    2. 직급 순 (팀장: 1, 부팀장: 2, 대리: 3, 주임: 4, 사원: 5)
-    3. 근무구분 순 (주간스케줄: 1, 주5일: 2, 야간: 3)
-    4. 사번 오름차순
+    1. admin 관리자 최상단 고정
+    2. 1차: 직급 순 (팀장: 1, 부팀장: 2, 그 외 직급: 3)
+    3. 2차: 근무구분 순 (주간스케줄: 1, 주5일: 2, 야간: 3)
+    4. 3차: 같은 직급 내 사번 기준 오름차순
     """
     df = pd.DataFrame(emp_list)
     if df.empty:
         return df
     
-    # 1. 관리자 순서
-    df['admin_rank'] = df['관리자'].map(lambda x: 0 if x else 1)
+    # 1. admin 계정 최상단 고정을 위한 랭크 지정
+    df['admin_rank'] = df['사번'].map(lambda x: 0 if str(x).strip() == 'admin' else 1)
     
-    # 2. 직급 순서 명확히 정의 (팀장, 부팀장, 대리, 주임, 사원)
-    rank_order = {'팀장': 1, '부팀장': 2, '대리': 3, '주임': 4, '사원': 5}
-    df['rank_order'] = df['직급'].map(lambda x: rank_order.get(x, 99))
+    # 2. 직급 순서 (팀장 -> 부팀장 -> 그 외 직급)
+    rank_order = {'팀장': 1, '부팀장': 2}
+    df['rank_order'] = df['직급'].map(lambda x: rank_order.get(x, 3))
     
     # 3. 근무구분 순서 (주간스케줄 -> 주5일 -> 야간)
     type_order = {'주간스케줄': 1, '주5일': 2, '야간': 3}
@@ -118,7 +118,7 @@ if 'requests' not in st.session_state:
     st.session_state.requests = []
 
 # ==============================================================================
-# 2. 첫 페이지: 로그인 화면 (숫자 사번 문자열 비교 보완)
+# 2. 첫 페이지: 로그인 화면
 # ==============================================================================
 if not st.session_state.logged_in_user:
     st.title("🔒 물류센터 ERP 시스템 - 로그인")
