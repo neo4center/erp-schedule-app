@@ -27,25 +27,13 @@ def load_employees_from_db():
         response = supabase.table("employees").select("*").execute()
         data = response.data
         if not data:
-            # DB가 비어있다면 초기 기본 계정(admin) 세팅
-            initial_data = [
-                {'emp_id': 'admin', 'password': 'admin', 'name': '관리자', 'rank': '팀장', 'work_type': '주5일', 'off_days': [], 'pref_partner': '', 'dislike_partner': '', 'join_date': '2023-01-01', 'annual_leave': 15, 'vacation': 3, 'is_admin': True},
-                {'emp_id': '1001', 'password': '1001', 'name': '최광호', 'rank': '팀장', 'work_type': '주5일', 'off_days': [], 'pref_partner': '', 'dislike_partner': '', 'join_date': '2023-01-01', 'annual_leave': 15, 'vacation': 3, 'is_admin': True},
-                {'emp_id': '1002', 'password': '1002', 'name': '권민중', 'rank': '부팀장', 'work_type': '야간', 'off_days': [], 'pref_partner': '이영희', 'dislike_partner': '김철수', 'join_date': '2024-05-01', 'annual_leave': 15, 'vacation': 3, 'is_admin': False},
-                {'emp_id': '1003', 'password': '1003', 'name': '김철수', 'rank': '대리', 'work_type': '야간', 'off_days': [], 'pref_partner': '', 'dislike_partner': '권민중', 'join_date': '2025-02-01', 'annual_leave': 15, 'vacation': 3, 'is_admin': False},
-                {'emp_id': '1004', 'password': '1004', 'name': '이영희', 'rank': '주임', 'work_type': '야간', 'off_days': [], 'pref_partner': '권민중', 'dislike_partner': '', 'join_date': '2025-11-01', 'annual_leave': 15, 'vacation': 3, 'is_admin': False},
-                {'emp_id': '1005', 'password': '1005', 'name': '박민수', 'rank': '사원', 'work_type': '주간스케줄', 'off_days': ['수', '목'], 'pref_partner': '', 'dislike_partner': '', 'join_date': '2026-02-01', 'annual_leave': 10, 'vacation': 3, 'is_admin': False},
-            ]
-            for emp in initial_data:
-                supabase.table("employees").insert(emp).execute()
-            return initial_data
+            return []
         
-        # 앱 내부 구조에 맞게 키 매핑 변환
         formatted_data = []
         for row in data:
             formatted_data.append({
-                '사번': row['emp_id'],
-                '비밀번호': row['password'],
+                '사번': str(row['emp_id']),
+                '비밀번호': str(row['password']),
                 '성명': row['name'],
                 '직급': row['rank'],
                 '구분': row['work_type'],
@@ -85,13 +73,35 @@ def delete_employee_from_db(emp_id):
     supabase.table("employees").delete().eq("emp_id", emp_id).execute()
 
 def get_sorted_employees(emp_list):
+    """
+    정렬 조건:
+    1. 관리자 최상단 (관리자 True: 0, False: 1)
+    2. 직급 순 (팀장: 1, 부팀장: 2, 기타: 3)
+    3. 근무구분 순 (주간스케줄: 1, 주5일: 2, 야간: 3)
+    4. 사번 오름차순
+    """
     df = pd.DataFrame(emp_list)
     if df.empty:
         return df
-    type_order = {'주5일': 1, '주간스케줄': 2, '야간': 3}
+    
+    # 1. 관리자 순서 (True가 먼저 오도록)
+    df['admin_rank'] = df['관리자'].map(lambda x: 0 if x else 1)
+    
+    # 2. 직급 순서 (팀장 -> 부팀장 -> 기타)
+    rank_order = {'팀장': 1, '부팀장': 2, '대리': 3, '주임': 4, '사원': 5}
+    df['rank_order'] = df['직급'].map(lambda x: rank_order.get(x, 99))
+    
+    # 3. 근무구분 순서 (주간스케줄 -> 주5일 -> 야간)
+    type_order = {'주간스케줄': 1, '주5일': 2, '야간': 3}
     df['type_rank'] = df['구분'].map(lambda x: type_order.get(x, 99))
-    df_sorted = df.sort_values(by=['type_rank', '사번'], ascending=[True, True])
-    return df_sorted.drop(columns=['type_rank'])
+    
+    # 정렬 수행
+    df_sorted = df.sort_values(
+        by=['admin_rank', 'rank_order', 'type_rank', '사번'], 
+        ascending=[True, True, True, True]
+    )
+    
+    return df_sorted.drop(columns=['admin_rank', 'rank_order', 'type_rank'])
 
 # ==============================================================================
 # 1. 세션 상태 초기화
@@ -159,16 +169,27 @@ if st.session_state.is_admin:
 
 tabs = st.tabs(tab_titles)
 
-# TAB 1: 근무자 명단
+# TAB 1: 근무자 명단 (정렬 및 컬럼 개편)
 with tabs[0]:
     st.subheader("📋 전체 근무자 명단")
     if st.session_state.employees:
         df_sorted = get_sorted_employees(st.session_state.employees)
-        df_sorted['성명(표식)'] = df_sorted.apply(lambda r: f"👑 {r['성명']} (관리자)" if r.get('관리자', False) else r['성명'], axis=1)
-        df_sorted['기본휴무일_표시'] = df_sorted['기본휴무일'].apply(lambda x: ", ".join(x) if isinstance(x, list) and x else "-")
-        target_cols = ['사번', '성명(표식)', '직급', '구분', '기본휴무일_표시', '선호짝꿍', '비선호짝꿍', '입사일', '관리자']
+        
+        df_sorted['성명(표식)'] = df_sorted.apply(
+            lambda r: f"👑 {r['성명']} (관리자)" if r.get('관리자', False) else r['성명'], axis=1
+        )
+        df_sorted['기본휴무일_표시'] = df_sorted['기본휴무일'].apply(
+            lambda x: ", ".join(x) if isinstance(x, list) and x else "-"
+        )
+        
+        # 선호/비선호 짝꿍을 제외하고 연차, 휴가를 포함하여 구성
+        target_cols = ['사번', '성명(표식)', '직급', '구분', '기본휴무일_표시', '입사일', '연차', '휴가', '관리자']
         valid_cols = [c for c in target_cols if c in df_sorted.columns]
-        st.dataframe(df_sorted[valid_cols].rename(columns={'기본휴무일_표시': '기본휴무일(주간스케줄)'}), use_container_width=True)
+        
+        st.dataframe(
+            df_sorted[valid_cols].rename(columns={'기본휴무일_표시': '기본휴무일(주간스케줄)'}), 
+            use_container_width=True
+        )
 
 # TAB 2: 근무조정 요청 입력
 with tabs[1]:
@@ -277,7 +298,7 @@ with tabs[2]:
             else:
                 st.error("❌ 제약 조건이 너무 까다로워 스케줄을 생성하지 못했습니다.")
 
-# TAB 4: [관리자 전용] 근무자 정보 관리 (Supabase 실시간 연동)
+# TAB 4: [관리자 전용] 근무자 정보 관리 (짝꿍 정보는 여기서만 관리)
 if st.session_state.is_admin:
     with tabs[3]:
         st.subheader("🛠️ [관리자 전용] 근무자 정보 추가 / 수정 / 삭제")
