@@ -1,5 +1,5 @@
 import calendar
-from datetime import datetime
+from datetime import datetime, date
 import json
 import pandas as pd
 import openpyxl
@@ -7,7 +7,7 @@ import streamlit as st
 from ortools.sat.python import cp_model
 from supabase import create_client, Client
 
-# 페이지 기본 설정 (와이드 레이아웃)
+# 페이지 기본 설정
 st.set_page_config(page_title="물류센터 근무계획표 시스템", layout="wide")
 
 # ==============================================================================
@@ -84,14 +84,9 @@ def get_sorted_employees(emp_list):
     if df.empty:
         return df
     
-    # 1. admin 계정 최상단 고정
     df['admin_rank'] = df['사번'].map(lambda x: 0 if str(x).strip() == 'admin' else 1)
-    
-    # 2. 직급 순서 (팀장 -> 부팀장 -> 그 외 직급)
     rank_order = {'팀장': 1, '부팀장': 2}
     df['rank_order'] = df['직급'].map(lambda x: rank_order.get(x, 3))
-    
-    # 3. 근무구분 순서 (주5일 -> 주간스케줄 -> 야간)
     type_order = {'주5일': 1, '주간스케줄': 2, '야간': 3}
     df['type_rank'] = df['구분'].map(lambda x: type_order.get(x, 99))
     
@@ -99,7 +94,6 @@ def get_sorted_employees(emp_list):
         by=['admin_rank', 'rank_order', 'type_rank', '사번'], 
         ascending=[True, True, True, True]
     )
-    
     return df_sorted.drop(columns=['admin_rank', 'rank_order', 'type_rank'])
 
 # ==============================================================================
@@ -115,7 +109,7 @@ if 'employees' not in st.session_state:
     st.session_state.employees = load_employees_from_db()
 
 if 'requests' not in st.session_state:
-    st.session_state.requests = []
+    st.session_state.requests = []  # 구조: {'성명': ..., '요청일자': ..., '요청근무': ..., '사유': ..., '상태': '대기중'}
 
 # ==============================================================================
 # 2. 첫 페이지: 로그인 화면
@@ -171,7 +165,7 @@ if st.session_state.is_admin:
 
 tabs = st.tabs(tab_titles)
 
-# TAB 1: 근무자 명단 (최대 16명 스크롤 없이 한 번에 표시)
+# TAB 1: 근무자 명단 (가운데 정렬 적용, 최대 16명 스크롤 없이 표시)
 with tabs[0]:
     st.subheader("📋 전체 근무자 명단")
     if st.session_state.employees:
@@ -187,36 +181,79 @@ with tabs[0]:
         target_cols = ['사번', '성명(표식)', '직급', '구분', '기본휴무일_표시', '입사일', '연차', '휴가', '관리자']
         valid_cols = [c for c in target_cols if c in df_sorted.columns]
         
-        # 16명 기준 행 높이에 맞춰 계산하여 스크롤바가 생기지 않도록 설정 (약 35픽셀 * 행 개수 + 헤더 여유 공간)
+        df_display = df_sorted[valid_cols].rename(columns={'기본휴무일_표시': '기본휴무일(주간스케줄)'})
+        
+        # 가운데 정렬 스타일 적용
+        styled_df = df_display.style.set_properties(**{'text-align': 'center'})
+        styled_df.set_table_styles([dict(selector='th', props=[('text-align', 'center')])])
+        
         row_count = len(df_sorted)
         calculated_height = min(max(row_count * 38 + 40, 150), 700)
         
-        st.dataframe(
-            df_sorted[valid_cols].rename(columns={'기본휴무일_표시': '기본휴무일(주간스케줄)'}), 
-            use_container_width=True,
-            height=calculated_height
-        )
+        st.dataframe(styled_df, use_container_width=True, height=calculated_height)
 
-# TAB 2: 근무조정 요청 입력
+# TAB 2: 근무조정 요청 입력 및 관리
 with tabs[1]:
     st.subheader("📝 팀원별 근무조정 요청 입력")
-    col1, col2, col3, col4 = st.columns(4)
-    emp_names = [e['성명'] for e in st.session_state.employees]
+    
+    col1, col2, col3 = st.columns(3)
     with col1:
-        req_emp = st.selectbox("근무자 선택", emp_names, key="req_emp_sb")
+        req_date = st.date_input("요청 일자 선택 (YYYY/MM/DD)", value=date.today())
     with col2:
-        req_day = st.number_input("요청 일자(일)", min_value=1, max_value=31, value=13)
-    with col3:
         req_type = st.selectbox("요청 근무 구분", ["대휴", "연차", "휴가", "비번", "공가", "휴무"])
-    with col4:
-        st.write(" ")
-        if st.button("요청 추가"):
-            st.session_state.requests.append({'성명': req_emp, '일자': req_day, '요청근무': req_type})
-            st.success(f"{req_emp} 님 {req_day}일 {req_type} 요청 등록 완료!")
+    with col3:
+        req_reason = st.text_input("요청 사유", placeholder="사유를 입력하세요")
+        
+    if st.button("근무조정 요청 등록"):
+        today_date = date.today()
+        delta_days = (req_date - today_date).days
+        
+        if delta_days < 15:
+            st.error("⚠️ 담당자와 협의해주세요 (근무조정 요청은 최소 15일 전까지만 가능합니다.)")
+        else:
+            date_str = req_date.strftime("%Y/%m/%d")
+            st.session_state.requests.append({
+                '성명': user['성명'],
+                '요청일자': date_str,
+                '요청근무': req_type,
+                '사유': req_reason if req_reason.strip() else "-",
+                '상태': '대기중'
+            })
+            st.success(f"{date_str} 자 {req_type} 요청이 등록되었습니다. (승인 대기중)")
 
+    st.markdown("---")
+    st.subheader("📋 근무조정 요청 내역 및 처리 현황")
+    
     if st.session_state.requests:
-        st.write("현재 등록된 요청 목록:")
-        st.dataframe(pd.DataFrame(st.session_state.requests), use_container_width=True)
+        df_req = pd.DataFrame(st.session_state.requests)
+        
+        if st.session_state.is_admin:
+            st.write("👑 **[관리자 전용] 요청 승인 및 반려 관리**")
+            for idx, req in enumerate(st.session_state.requests):
+                cols = st.columns([2, 2, 2, 3, 2, 2, 2])
+                cols[0].write(req['성명'])
+                cols[1].write(req['요청일자'])
+                cols[2].write(req['요청근무'])
+                cols[3].write(req['사유'])
+                cols[4].write(f"상태: **{req['상태']}**")
+                
+                if req['상태'] == '대기중':
+                    if cols[5].button("수락", key=f"accept_{idx}"):
+                        st.session_state.requests[idx]['상태'] = '수락됨'
+                        st.rerun()
+                    if cols[6].button("반려", key=f"reject_{idx}"):
+                        st.session_state.requests[idx]['상태'] = '반려됨'
+                        st.rerun()
+                else:
+                    cols[5].write("-")
+                    cols[6].write("-")
+        else:
+            # 일반 사용자는 본인 요청 내역 또는 전체 내역 및 상태 확인
+            st.dataframe(df_req, use_container_width=True)
+    else:
+        st.info("등록된 근무조정 요청 내역이 없습니다.")
+
+    if st.session_state.is_admin and st.session_state.requests:
         if st.button("요청 목록 전체 초기화"):
             st.session_state.requests = []
             st.rerun()
@@ -252,11 +289,18 @@ with tabs[2]:
                 for d in days:
                     model.AddExactlyOne(x[(e, d, s)] for s in range(8))
                     
+            # 수락된 요청사항만 엔진에 반영
             for req in st.session_state.requests:
-                e_idx = next((i for i, e in enumerate(employees) if e['성명'] == req['성명']), None)
-                if e_idx is not None and req['일자'] <= num_days:
-                    s_code = shift_map.get(req['요청근무'], 2)
-                    model.Add(x[(e_idx, req['일자'], s_code)] == 1)
+                if req['상태'] == '수락됨':
+                    e_idx = next((i for i, e in enumerate(employees) if e['성명'] == req['성명']), None)
+                    if e_idx is not None:
+                        try:
+                            req_d = int(req['요청일자'].split('/')[-1])
+                            if req_d <= num_days:
+                                s_code = shift_map.get(req['요청근무'], 2)
+                                model.Add(x[(e_idx, req_d, s_code)] == 1)
+                        except Exception:
+                            pass
                     
             night_indices = [i for i, e in enumerate(employees) if e['구분'] == '야간']
             for d in days:
@@ -390,7 +434,7 @@ if st.session_state.is_admin:
                             curr_join_dt = datetime.now().date()
                         mod_join = st.date_input("입사일", value=curr_join_dt).strftime("%Y-%m-%d")
                         mod_annual = st.number_input("연차 일수 수정", min_value=0, max_value=50, value=int(target_emp.get('연차', 15)))
-                        mod_vacation = st.number_input("휴가 일수 수정", min_value=0, max_value=30, value=int(target_emp.get('휴가', 3)))
+                        mod_vacation = st.number_input("휴가 일수 수정", min_value=0, max_value=30, value=int(target_emp.get('vacation', 3)))
                         mod_admin = st.checkbox("관리자 권한 부여", value=target_emp.get('관리자', False))
                         
                     btn_c1, btn_c2 = st.columns(2)
