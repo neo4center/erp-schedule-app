@@ -7,7 +7,7 @@ import streamlit as st
 from ortools.sat.python import cp_model
 from supabase import create_client, Client
 
-# 페이지 기본 설정
+# 페이지 기본 설정 (와이드 레이아웃)
 st.set_page_config(page_title="물류센터 근무계획표 시스템", layout="wide")
 
 # ==============================================================================
@@ -84,7 +84,7 @@ def get_sorted_employees(emp_list):
     if df.empty:
         return df
     
-    # 1. admin 계정 최상단 고정을 위한 랭크 지정
+    # 1. admin 계정 최상단 고정
     df['admin_rank'] = df['사번'].map(lambda x: 0 if str(x).strip() == 'admin' else 1)
     
     # 2. 직급 순서 (팀장 -> 부팀장 -> 그 외 직급)
@@ -171,7 +171,7 @@ if st.session_state.is_admin:
 
 tabs = st.tabs(tab_titles)
 
-# TAB 1: 근무자 명단
+# TAB 1: 근무자 명단 (최대 16명 스크롤 없이 한 번에 표시)
 with tabs[0]:
     st.subheader("📋 전체 근무자 명단")
     if st.session_state.employees:
@@ -187,9 +187,14 @@ with tabs[0]:
         target_cols = ['사번', '성명(표식)', '직급', '구분', '기본휴무일_표시', '입사일', '연차', '휴가', '관리자']
         valid_cols = [c for c in target_cols if c in df_sorted.columns]
         
+        # 16명 기준 행 높이에 맞춰 계산하여 스크롤바가 생기지 않도록 설정 (약 35픽셀 * 행 개수 + 헤더 여유 공간)
+        row_count = len(df_sorted)
+        calculated_height = min(max(row_count * 38 + 40, 150), 700)
+        
         st.dataframe(
             df_sorted[valid_cols].rename(columns={'기본휴무일_표시': '기본휴무일(주간스케줄)'}), 
-            use_container_width=True
+            use_container_width=True,
+            height=calculated_height
         )
 
 # TAB 2: 근무조정 요청 입력
@@ -299,7 +304,7 @@ with tabs[2]:
             else:
                 st.error("❌ 제약 조건이 너무 까다로워 스케줄을 생성하지 못했습니다.")
 
-# TAB 4: [관리자 전용] 근무자 정보 관리 (연차, 휴가 등록/수정 추가)
+# TAB 4: [관리자 전용] 근무자 정보 관리
 if st.session_state.is_admin:
     with tabs[3]:
         st.subheader("🛠️ [관리자 전용] 근무자 정보 추가 / 수정 / 삭제")
@@ -327,11 +332,8 @@ if st.session_state.is_admin:
                 new_pref = st.text_input("선호 짝꿍 (야간 전용)")
                 new_dislike = st.text_input("비선호 짝꿍 (야간 전용)")
                 new_join = st.date_input("입사일").strftime("%Y-%m-%d")
-                
-                # 신규 등록 시 연차, 휴가 일수 입력 필드 추가
                 new_annual = st.number_input("연차 일수", min_value=0, max_value=50, value=15)
                 new_vacation = st.number_input("휴가 일수", min_value=0, max_value=30, value=3)
-                
                 is_admin_check = st.checkbox("관리자 권한 부여")
                 
             if st.button("신규 근무자 등록 저장", use_container_width=True):
@@ -387,11 +389,8 @@ if st.session_state.is_admin:
                         except ValueError:
                             curr_join_dt = datetime.now().date()
                         mod_join = st.date_input("입사일", value=curr_join_dt).strftime("%Y-%m-%d")
-                        
-                        # 기존 근무자 수정 시 연차, 휴가 일수 수정 필드 추가
                         mod_annual = st.number_input("연차 일수 수정", min_value=0, max_value=50, value=int(target_emp.get('연차', 15)))
                         mod_vacation = st.number_input("휴가 일수 수정", min_value=0, max_value=30, value=int(target_emp.get('휴가', 3)))
-                        
                         mod_admin = st.checkbox("관리자 권한 부여", value=target_emp.get('관리자', False))
                         
                     btn_c1, btn_c2 = st.columns(2)
